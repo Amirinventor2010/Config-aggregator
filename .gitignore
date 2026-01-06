@@ -1,0 +1,18 @@
+# secrets
+.env
+
+# telethon session
+session.session
+session.session-journal
+
+# python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# virtual env
+.venv/
+venv/
+
+# logs
+*.log
