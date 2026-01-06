@@ -9,9 +9,7 @@ import aiosqlite
 
 class SQLiteConfigStore:
     """
-    ذخیره‌سازی کانفیگ‌ها با dedupe و محدودیت ظرفیت.
-    - uri به صورت PRIMARY KEY => تکراری‌ها جایگزین می‌شن
-    - ts آخرین زمان دیده‌شدن
+    Dedup بر اساس dedupe_key (UUID).
     """
 
     def __init__(self, db_path: str, max_items: int):
@@ -23,53 +21,65 @@ class SQLiteConfigStore:
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS configs (
-                    uri TEXT PRIMARY KEY,
-                    ts  INTEGER NOT NULL
+                    dedupe_key TEXT PRIMARY KEY,
+                    uri        TEXT NOT NULL,
+                    ts         INTEGER NOT NULL
                 )
             """)
             await db.execute("CREATE INDEX IF NOT EXISTS idx_configs_ts ON configs(ts)")
             await db.commit()
 
-    async def add_many(self, uris: List[str], ts: Optional[int] = None) -> Tuple[int, int]:
+    async def add_many(
+        self,
+        items: List[Tuple[str, str]],  # (dedupe_key, uri)
+        ts: Optional[int] = None
+    ) -> Tuple[int, int, int]:
         """
-        uris: لیست کانفیگ‌های نهایی (rename شده)
-        ts: timestamp (اگر ندی، زمان فعلی)
-        خروجی: (added_or_updated, total_after)
+        خروجی: (new, updated, total)
         """
-        if not uris:
+        if not items:
             total = await self.count()
-            return 0, total
+            return 0, 0, total
 
         if ts is None:
             ts = int(time.time())
 
         async with self._lock:
             async with aiosqlite.connect(self.db_path) as db:
-                # dedupe با PRIMARY KEY: INSERT OR REPLACE
-                await db.executemany(
-                    "INSERT OR REPLACE INTO configs (uri, ts) VALUES (?, ?)",
-                    [(u, ts) for u in uris]
-                )
+                new = 0
+                updated = 0
 
-                # trim: فقط max_items تا جدیدترین نگه می‌داریم
+                for key, uri in items:
+                    cur = await db.execute(
+                        "SELECT 1 FROM configs WHERE dedupe_key = ?",
+                        (key,)
+                    )
+                    exists = await cur.fetchone()
+
+                    if exists:
+                        updated += 1
+                    else:
+                        new += 1
+
+                    await db.execute(
+                        "INSERT OR REPLACE INTO configs (dedupe_key, uri, ts) VALUES (?, ?, ?)",
+                        (key, uri, ts)
+                    )
+
                 await db.execute(f"""
                     DELETE FROM configs
-                    WHERE uri NOT IN (
-                        SELECT uri FROM configs
+                    WHERE dedupe_key NOT IN (
+                        SELECT dedupe_key FROM configs
                         ORDER BY ts DESC
                         LIMIT {int(self.max_items)}
                     )
                 """)
-
                 await db.commit()
 
             total = await self.count()
-            return len(uris), total
+            return new, updated, total
 
     async def get_latest(self, limit: Optional[int] = None) -> List[str]:
-        """
-        جدیدترین‌ها بر اساس ts. خروجی را از قدیمی->جدید برمی‌گرداند (برای ساب قشنگ‌تره).
-        """
         if limit is None:
             limit = self.max_items
 
@@ -80,7 +90,6 @@ class SQLiteConfigStore:
             )
             rows = await cur.fetchall()
 
-        # reverse: قدیمی->جدید
         return [r[0] for r in rows][::-1]
 
     async def count(self) -> int:

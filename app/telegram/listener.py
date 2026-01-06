@@ -17,7 +17,8 @@ def attach_channel_listener(
     settings: Settings,
     on_message: Optional[MessageHandler] = None,
 ) -> None:
-    @client.on(events.NewMessage(chats=settings.tg_channel))
+    # ✅ اینجا multi-channel شد: settings.tg_channels (لیست)
+    @client.on(events.NewMessage(chats=settings.tg_channels))
     async def _handler(event):
         text = event.raw_text or ""
         if on_message:
