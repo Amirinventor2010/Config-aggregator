@@ -71,6 +71,8 @@ DB_PATH=configs.db
 ## 🚀 Installation
 
 pip install telethon python-dotenv aiosqlite fastapi uvicorn
+ / or /
+pip install -r requirements.txt
 
 ---
 
